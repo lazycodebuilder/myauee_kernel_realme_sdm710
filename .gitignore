@@ -123,3 +123,13 @@ kernel/configs/android-*.cfg
 #Ignoring Android.bp link file
 #
 Android.bp
+
+# Ignore out folder
+/out/
+
+# Ignore build.log file
+build.log
+
+# Ignore Zone.Identifier files
+*Zone.Identifier
+
