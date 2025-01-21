@@ -62,6 +62,8 @@ unsigned long __stack_chk_guard __read_mostly;
 EXPORT_SYMBOL(__stack_chk_guard);
 #endif
 
+#ifndef CONFIG_OPLUS_FEATURE_QCOM_MINIDUMP_ENHANCE
+
 /*
  * Function pointers to optional machine specific functions
  */
@@ -69,6 +71,19 @@ void (*pm_power_off)(void);
 EXPORT_SYMBOL_GPL(pm_power_off);
 
 void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd);
+
+#else
+
+#include <soc/oplus/system/qcom_minidump_enhance.h>
+
+/*
+ * Function pointers to optional machine specific functions
+ */
+void (*pm_power_off)(void) = do_poweroff_early;
+EXPORT_SYMBOL_GPL(pm_power_off);
+void (*arm_pm_restart)(enum reboot_mode reboot_mode, const char *cmd) = do_restart_early;
+
+#endif /* CONFIG_OPLUS_FEATURE_QCOM_MINIDUMP_ENHANCE */
 
 /*
  * This is our default idle handler.
@@ -83,6 +98,16 @@ void arch_cpu_idle(void)
 	cpu_do_idle();
 	local_irq_enable();
 	trace_cpu_idle_rcuidle(PWR_EVENT_EXIT, smp_processor_id());
+}
+
+void arch_cpu_idle_enter(void)
+{
+	idle_notifier_call_chain(IDLE_START);
+}
+
+void arch_cpu_idle_exit(void)
+{
+	idle_notifier_call_chain(IDLE_END);
 }
 
 #ifdef CONFIG_HOTPLUG_CPU
@@ -180,7 +205,7 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 	 * don't attempt to dump non-kernel addresses or
 	 * values that are probably just small negative numbers
 	 */
-	if (addr < PAGE_OFFSET || addr > -256UL)
+	if (addr < KIMAGE_VADDR || addr > -256UL)
 		return;
 
 	printk("\n%s: %#lx:\n", name, addr);
@@ -216,18 +241,12 @@ static void show_data(unsigned long addr, int nbytes, const char *name)
 static void show_extra_register_data(struct pt_regs *regs, int nbytes)
 {
 	mm_segment_t fs;
-	unsigned int i;
 
 	fs = get_fs();
 	set_fs(KERNEL_DS);
 	show_data(regs->pc - nbytes, nbytes * 2, "PC");
 	show_data(regs->regs[30] - nbytes, nbytes * 2, "LR");
 	show_data(regs->sp - nbytes, nbytes * 2, "SP");
-	for (i = 0; i < 30; i++) {
-		char name[4];
-		snprintf(name, sizeof(name), "X%u", i);
-		show_data(regs->regs[i] - nbytes, nbytes * 2, name);
-	}
 	set_fs(fs);
 }
 
@@ -251,6 +270,11 @@ void __show_regs(struct pt_regs *regs)
 	print_symbol("LR is at %s\n", lr);
 	printk("pc : [<%016llx>] lr : [<%016llx>] pstate: %08llx\n",
 	       regs->pc, lr, regs->pstate);
+#ifdef CONFIG_OPLUS_FEATURE_QCOM_MINIDUMP_ENHANCE //wen.luo@bsp.kernel.stability add for dump parser addr
+	printk("pc : %016llx\n", regs->pc);
+	printk("lr : %016llx\n", lr);
+#endif
+
 	printk("sp : %016llx\n", sp);
 
 	i = top_reg;
@@ -267,13 +291,11 @@ void __show_regs(struct pt_regs *regs)
 		pr_cont("\n");
 	}
 	if (!user_mode(regs))
-		show_extra_register_data(regs, 128);
-	printk("\n");
+		show_extra_register_data(regs, 64);
 }
 
 void show_regs(struct pt_regs * regs)
 {
-	printk("\n");
 	__show_regs(regs);
 }
 
