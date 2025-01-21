@@ -37,6 +37,30 @@ void disable_sched_clock_irqtime(void)
 {
 	sched_clock_irqtime = 0;
 }
+#ifdef VENDOR_EDIT
+unsigned int sysctl_task_cpustats_enable = 0;
+DEFINE_PER_CPU(struct kernel_task_cpustat, ktask_cpustat);
+static void account_task_time(struct task_struct *p, unsigned int ticks,
+		enum cpu_usage_stat type)
+{
+	struct kernel_task_cpustat *kstat;
+	int idx;
+	struct task_cpustat *s;
+	if (!sysctl_task_cpustats_enable)
+		return;
+	kstat = this_cpu_ptr(&ktask_cpustat);
+	idx = kstat->idx;
+	s = &kstat->cpustat[idx];
+	s->pid = p->pid;
+	s->tgid = p->tgid;
+	s->type = type;
+	s->freq = cpufreq_quick_get(p->cpu);
+	s->begin = jiffies - cputime_one_jiffy * ticks;
+	s->end = jiffies;
+	memcpy(s->comm, p->comm, TASK_COMM_LEN);
+	kstat->idx = (idx + 1) % MAX_CTP_WINDOW;
+}
+#endif /* VENDOR_EDIT */
 
 static void irqtime_account_delta(struct irqtime *irqtime, u64 delta,
 				  enum cpu_usage_stat idx)
@@ -59,19 +83,16 @@ void irqtime_account_irq(struct task_struct *curr)
 	struct irqtime *irqtime = this_cpu_ptr(&cpu_irqtime);
 	s64 delta;
 	int cpu;
-#ifdef CONFIG_SCHED_WALT
 	u64 wallclock;
+#ifdef CONFIG_SCHED_WALT
 	bool account = true;
 #endif
-
 	if (!sched_clock_irqtime)
 		return;
 
 	cpu = smp_processor_id();
-#ifdef CONFIG_SCHED_WALT
 	wallclock = sched_clock_cpu(cpu);
-#endif
-	delta = sched_clock_cpu(cpu) - irqtime->irq_start_time;
+	delta = wallclock - irqtime->irq_start_time;
 	irqtime->irq_start_time += delta;
 
 	/*
@@ -89,7 +110,9 @@ void irqtime_account_irq(struct task_struct *curr)
 		account = false;
 
 	if (account)
-		walt_account_irqtime(cpu, curr, delta, wallclock);
+		sched_account_irqtime(cpu, curr, delta, wallclock);
+	else if (curr != this_cpu_ksoftirqd())
+		sched_account_irqstart(cpu, curr, wallclock);
 #endif
 }
 EXPORT_SYMBOL_GPL(irqtime_account_irq);
@@ -422,14 +445,26 @@ static void irqtime_account_process_tick(struct task_struct *p, int user_tick,
 		 * Also, p->stime needs to be updated for ksoftirqd.
 		 */
 		__account_system_time(p, cputime, scaled, CPUTIME_SOFTIRQ);
+#ifdef VENDOR_EDIT
+		account_task_time(p, ticks, CPUTIME_SOFTIRQ);
+#endif /* VENDOR_EDIT */
 	} else if (user_tick) {
 		account_user_time(p, cputime, scaled);
+#ifdef VENDOR_EDIT
+		account_task_time(p, ticks, CPUTIME_USER);
+#endif /* VENDOR_EDIT */
 	} else if (p == rq->idle) {
 		account_idle_time(cputime);
 	} else if (p->flags & PF_VCPU) { /* System time or guest time */
 		account_guest_time(p, cputime, scaled);
+#ifdef VENDOR_EDIT
+		account_task_time(p, ticks, CPUTIME_USER);
+#endif /* VENDOR_EDIT */
 	} else {
 		__account_system_time(p, cputime, scaled,	CPUTIME_SYSTEM);
+#ifdef VENDOR_EDIT
+		account_task_time(p, ticks, CPUTIME_SYSTEM);
+#endif /* VENDOR_EDIT */
 	}
 }
 
