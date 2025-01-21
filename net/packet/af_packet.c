@@ -247,6 +247,10 @@ struct packet_skb_cb {
 static void __fanout_unlink(struct sock *sk, struct packet_sock *po);
 static void __fanout_link(struct sock *sk, struct packet_sock *po);
 
+//#ifdef OPLUS_FEATURE_DHCP
+int (*handle_dhcp)(struct sock *sk, struct sk_buff *skb, struct net_device *dev, struct packet_type *pt) = NULL;
+EXPORT_SYMBOL(handle_dhcp);
+//#endif /* OPLUS_FEATURE_DHCP */
 static int packet_direct_xmit(struct sk_buff *skb)
 {
 	struct net_device *dev = skb->dev;
@@ -1699,7 +1703,7 @@ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
 		match->flags = flags;
 		INIT_LIST_HEAD(&match->list);
 		spin_lock_init(&match->lock);
-		atomic_set(&match->sk_ref, 0);
+		refcount_set(&match->sk_ref, 0);
 		fanout_init_data(match);
 		match->prot_hook.type = po->prot_hook.type;
 		match->prot_hook.dev = po->prot_hook.dev;
@@ -1716,19 +1720,19 @@ static int fanout_add(struct sock *sk, u16 id, u16 type_flags)
 	    match->prot_hook.type == po->prot_hook.type &&
 	    match->prot_hook.dev == po->prot_hook.dev) {
 		err = -ENOSPC;
-		if (atomic_read(&match->sk_ref) < PACKET_FANOUT_MAX) {
+		if (refcount_read(&match->sk_ref) < PACKET_FANOUT_MAX) {
 			__dev_remove_pack(&po->prot_hook);
 			po->fanout = match;
 			po->rollover = rollover;
 			rollover = NULL;
-			atomic_inc(&match->sk_ref);
+			refcount_set(&match->sk_ref, refcount_read(&match->sk_ref) + 1);
 			__fanout_link(sk, po);
 			err = 0;
 		}
 	}
 	spin_unlock(&po->bind_lock);
 
-	if (err && !atomic_read(&match->sk_ref)) {
+	if (err && !refcount_read(&match->sk_ref)) {
 		list_del(&match->list);
 		kfree(match);
 	}
@@ -1754,7 +1758,7 @@ static struct packet_fanout *fanout_release(struct sock *sk)
 	if (f) {
 		po->fanout = NULL;
 
-		if (atomic_dec_and_test(&f->sk_ref))
+		if (refcount_dec_and_test(&f->sk_ref))
 			list_del(&f->list);
 		else
 			f = NULL;
@@ -2121,6 +2125,13 @@ static int packet_rcv(struct sk_buff *skb, struct net_device *dev,
 
 	/* drop conntrack reference */
 	nf_reset(skb);
+
+//#ifdef OPLUS_FEATURE_DHCP
+    if (handle_dhcp != NULL && handle_dhcp(sk, skb, dev, pt)) {
+        printk("drop dhcp offer packet");
+        goto drop;
+    }
+//#endif /* OPLUS_FEATURE_DHCP */
 
 	spin_lock(&sk->sk_receive_queue.lock);
 	po->stats.stats1.tp_packets++;

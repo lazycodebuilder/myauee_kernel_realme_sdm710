@@ -83,7 +83,9 @@
 
 #include <crypto/hash.h>
 #include <linux/scatterlist.h>
-
+//#ifdef OPLUS_FEATURE_NWPOWER
+#include <net/oplus_nwpower.h>
+//#endif /* OPLUS_FEATURE_NWPOWER */
 int sysctl_tcp_tw_reuse __read_mostly;
 int sysctl_tcp_low_latency __read_mostly;
 
@@ -1658,6 +1660,10 @@ lookup:
 	if (!sk)
 		goto no_tcp_socket;
 
+	//#ifdef OPLUS_FEATURE_NWPOWER
+	oplus_match_ipa_tcp_wakeup(OPLUS_TCP_TYPE_V4, sk);
+	//#endif /* OPLUS_FEATURE_NWPOWER */
+
 process:
 	if (sk->sk_state == TCP_TIME_WAIT)
 		goto do_time_wait;
@@ -1760,6 +1766,9 @@ bad_packet:
 	}
 
 discard_it:
+	//#ifdef OPLUS_FEATURE_NWPOWER
+	oplus_ipa_schedule_work();
+	//#endif /* OPLUS_FEATURE_NWPOWER */
 	/* Discard frame. */
 	kfree_skb(skb);
 	return 0;
@@ -2246,6 +2255,7 @@ static void get_tcp4_sock(struct sock *sk, struct seq_file *f, int i)
 	__be32 src = inet->inet_rcv_saddr;
 	__u16 destp = ntohs(inet->inet_dport);
 	__u16 srcp = ntohs(inet->inet_sport);
+	__u8 seq_state = sk->sk_state;
 	int rx_queue;
 	int state;
 
@@ -2265,6 +2275,9 @@ static void get_tcp4_sock(struct sock *sk, struct seq_file *f, int i)
 		timer_expires = jiffies;
 	}
 
+	if (inet->transparent)
+		seq_state |= 0x80;
+
 	state = sk_state_load(sk);
 	if (state == TCP_LISTEN)
 		rx_queue = sk->sk_ack_backlog;
@@ -2276,7 +2289,7 @@ static void get_tcp4_sock(struct sock *sk, struct seq_file *f, int i)
 
 	seq_printf(f, "%4d: %08X:%04X %08X:%04X %02X %08X:%08X %02X:%08lX "
 			"%08X %5u %8d %lu %d %pK %lu %lu %u %u %d",
-		i, src, srcp, dest, destp, state,
+		i, src, srcp, dest, destp, seq_state,
 		tp->write_seq - tp->snd_una,
 		rx_queue,
 		timer_active,

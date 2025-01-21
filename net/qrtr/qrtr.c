@@ -26,18 +26,6 @@
 #define QRTR_MIN_EPH_SOCKET 0x4000
 #define QRTR_MAX_EPH_SOCKET 0x7fff
 
-enum qrtr_pkt_type {
-	QRTR_TYPE_DATA		= 1,
-	QRTR_TYPE_HELLO		= 2,
-	QRTR_TYPE_BYE		= 3,
-	QRTR_TYPE_NEW_SERVER	= 4,
-	QRTR_TYPE_DEL_SERVER	= 5,
-	QRTR_TYPE_DEL_CLIENT	= 6,
-	QRTR_TYPE_RESUME_TX	= 7,
-	QRTR_TYPE_EXIT		= 8,
-	QRTR_TYPE_PING		= 9,
-};
-
 /**
  * struct qrtr_hdr - (I|R)PCrouter packet header
  * @version: protocol version
@@ -61,8 +49,6 @@ struct qrtr_hdr {
 } __packed;
 
 #define QRTR_HDR_SIZE sizeof(struct qrtr_hdr)
-#define QRTR_NODE_BCAST ((unsigned int)-1)
-#define QRTR_PORT_CTRL ((unsigned int)-2)
 
 struct qrtr_sock {
 	/* WARNING: sk must be the first member */
@@ -728,6 +714,10 @@ static int qrtr_recvmsg(struct socket *sock, struct msghdr *msg,
 	rc = copied;
 
 	if (addr) {
+                /* There is an anonymous 2-byte hole after sq_family,
+                 * make sure to clear it.
+                 */
+                memset(addr, 0, sizeof(*addr));
 		addr->sq_family = AF_QIPCRTR;
 		addr->sq_node = le32_to_cpu(phdr->src_node_id);
 		addr->sq_port = le32_to_cpu(phdr->src_port_id);

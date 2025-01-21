@@ -89,6 +89,8 @@
 #include <linux/magic.h>
 #include <linux/slab.h>
 #include <linux/xattr.h>
+#include <linux/seemp_api.h>
+#include <linux/seemp_instrumentation.h>
 #include <linux/nospec.h>
 
 #include <asm/uaccess.h>
@@ -108,7 +110,9 @@
 #include <linux/atalk.h>
 #include <net/busy_poll.h>
 #include <linux/errqueue.h>
-
+//#ifdef OPLUS_FEATURE_NWPOWER_NETCONTROLLER
+#include <net/oplus_nwpower.h>
+//#endif /* OPLUS_FEATURE_NWPOWER_NETCONTROLLER */
 #ifdef CONFIG_NET_RX_BUSY_POLL
 unsigned int sysctl_net_busy_read __read_mostly;
 unsigned int sysctl_net_busy_poll __read_mostly;
@@ -116,6 +120,8 @@ unsigned int sysctl_net_busy_poll __read_mostly;
 
 static ssize_t sock_read_iter(struct kiocb *iocb, struct iov_iter *to);
 static ssize_t sock_write_iter(struct kiocb *iocb, struct iov_iter *from);
+static BLOCKING_NOTIFIER_HEAD(sockev_notifier_list);
+
 static int sock_mmap(struct file *file, struct vm_area_struct *vma);
 
 static int sock_close(struct inode *inode, struct file *file);
@@ -170,6 +176,14 @@ static const struct net_proto_family __rcu *net_families[NPROTO] __read_mostly;
 static DEFINE_PER_CPU(int, sockets_in_use);
 
 /*
+ * Socket Event framework helpers
+ */
+static void sockev_notify(unsigned long event, struct socket *sk)
+{
+	blocking_notifier_call_chain(&sockev_notifier_list, event, sk);
+}
+
+/**
  * Support routines.
  * Move socket addresses back and forth across the kernel/user
  * divide and look after the messy bits.
@@ -427,6 +441,11 @@ struct file *sock_alloc_file(struct socket *sock, int flags, const char *dname)
 	sock->file = file;
 	file->f_flags = O_RDWR | (flags & O_NONBLOCK);
 	file->private_data = sock;
+	//#ifdef OPLUS_FEATURE_NWPOWER
+	if (sock->sk) {
+		sock->sk->sk_oplus_pid = current->tgid;
+	}
+	//#endif /* OPLUS_FEATURE_NWPOWER */
 	return file;
 }
 EXPORT_SYMBOL(sock_alloc_file);
@@ -1267,6 +1286,9 @@ SYSCALL_DEFINE3(socket, int, family, int, type, int, protocol)
 	if (retval < 0)
 		goto out;
 
+	if (retval == 0)
+		sockev_notify(SOCKEV_SOCKET, sock);
+
 	retval = sock_map_fd(sock, flags & (O_CLOEXEC | O_NONBLOCK));
 	if (retval < 0)
 		goto out_release;
@@ -1412,6 +1434,8 @@ SYSCALL_DEFINE3(bind, int, fd, struct sockaddr __user *, umyaddr, int, addrlen)
 						      &address, addrlen);
 		}
 		fput_light(sock->file, fput_needed);
+		if (!err)
+			sockev_notify(SOCKEV_BIND, sock);
 	}
 	return err;
 }
@@ -1439,6 +1463,8 @@ SYSCALL_DEFINE2(listen, int, fd, int, backlog)
 			err = sock->ops->listen(sock, backlog);
 
 		fput_light(sock->file, fput_needed);
+		if (!err)
+			sockev_notify(SOCKEV_LISTEN, sock);
 	}
 	return err;
 }
@@ -1525,7 +1551,8 @@ SYSCALL_DEFINE4(accept4, int, fd, struct sockaddr __user *, upeer_sockaddr,
 
 	fd_install(newfd, newfile);
 	err = newfd;
-
+	if (!err)
+		sockev_notify(SOCKEV_ACCEPT, sock);
 out_put:
 	fput_light(sock->file, fput_needed);
 out:
@@ -1575,6 +1602,8 @@ SYSCALL_DEFINE3(connect, int, fd, struct sockaddr __user *, uservaddr,
 
 	err = sock->ops->connect(sock, (struct sockaddr *)&address, addrlen,
 				 sock->file->f_flags);
+	if (!err)
+		sockev_notify(SOCKEV_CONNECT, sock);
 out_put:
 	fput_light(sock->file, fput_needed);
 out:
@@ -1659,6 +1688,8 @@ SYSCALL_DEFINE6(sendto, int, fd, void __user *, buff, size_t, len,
 	struct msghdr msg;
 	struct iovec iov;
 	int fput_needed;
+
+	seemp_logk_sendto(fd, buff, len, flags, addr, addr_len);
 
 	err = import_single_range(WRITE, buff, len, &iov, &msg.msg_iter);
 	if (unlikely(err))
@@ -1833,6 +1864,7 @@ SYSCALL_DEFINE2(shutdown, int, fd, int, how)
 
 	sock = sockfd_lookup_light(fd, &err, &fput_needed);
 	if (sock != NULL) {
+		sockev_notify(SOCKEV_SHUTDOWN, sock);
 		err = security_socket_shutdown(sock, how);
 		if (!err)
 			err = sock->ops->shutdown(sock, how);
@@ -1993,8 +2025,14 @@ static int ___sys_sendmsg(struct socket *sock, struct user_msghdr __user *msg,
 	}
 
 out_freectl:
-	if (ctl_buf != ctl)
+	if (ctl_buf != ctl){
+#ifdef CONFIG_OPLUS_SECURE_GUARD
+#ifdef CONFIG_OPLUS_ROOT_CHECK
+		memset(ctl_buf, 0, ctl_len);
+#endif /* CONFIG_OPLUS_ROOT_CHECK */
+#endif /* CONFIG_OPLUS_SECURE_GUARD */
 		sock_kfree_s(sock->sk, ctl_buf, ctl_len);
+	}
 out_freeiov:
 	kfree(iov);
 	return err;
@@ -3348,6 +3386,18 @@ int kernel_sock_shutdown(struct socket *sock, enum sock_shutdown_cmd how)
 	return sock->ops->shutdown(sock, how);
 }
 EXPORT_SYMBOL(kernel_sock_shutdown);
+
+int sockev_register_notify(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_register(&sockev_notifier_list, nb);
+}
+EXPORT_SYMBOL(sockev_register_notify);
+
+int sockev_unregister_notify(struct notifier_block *nb)
+{
+	return blocking_notifier_chain_unregister(&sockev_notifier_list, nb);
+}
+EXPORT_SYMBOL(sockev_unregister_notify);
 
 /* This routine returns the IP overhead imposed by a socket i.e.
  * the length of the underlying IP header, depending on whether
