@@ -17,6 +17,8 @@
 #include <linux/bitops.h>
 #include <linux/compiler.h>
 #include <linux/atomic.h>
+#include <linux/rhashtable.h>
+#include <linux/list.h>
 
 #include <linux/netfilter/nf_conntrack_tcp.h>
 #include <linux/netfilter/nf_conntrack_dccp.h>
@@ -25,6 +27,15 @@
 #include <net/netfilter/ipv6/nf_conntrack_icmpv6.h>
 
 #include <net/netfilter/nf_conntrack_tuple.h>
+
+#define SIP_LIST_ELEMENTS	2
+#define OPLUS_FEATURE_WIFI_LUCKYMONEY
+
+struct sip_length {
+	int msg_length[SIP_LIST_ELEMENTS];
+	int skb_len[SIP_LIST_ELEMENTS];
+	int data_len[SIP_LIST_ELEMENTS];
+};
 
 /* per conntrack: protocol private data */
 union nf_conntrack_proto {
@@ -70,6 +81,11 @@ struct nf_conn_help {
 #include <net/netfilter/ipv4/nf_conntrack_ipv4.h>
 #include <net/netfilter/ipv6/nf_conntrack_ipv6.h>
 
+/* Handle NATTYPE Stuff,only if NATTYPE module was defined */
+#ifdef CONFIG_IP_NF_TARGET_NATTYPE_MODULE
+#include <linux/netfilter_ipv4/ipt_NATTYPE.h>
+#endif
+
 struct nf_conn {
 	/* Usage count in here is 1 for hash table, 1 per skb,
 	 * plus 1 for any connection(s) we are `master' for
@@ -104,8 +120,25 @@ struct nf_conn {
 #endif
 	/* all members below initialized via memset */
 	struct { } __nfct_init_offset;
+    //#ifdef OPLUS_FEATURE_WIFI_SLA
+	u32 oplus_game_skb_len;
+	u32 oplus_game_detect_status;
+	u32 oplus_game_time_interval;
+	u32 oplus_game_up_count;
+	u32 oplus_game_down_count;
+	u32 oplus_game_lost_count;
+	u32 oplus_game_same_count;
+	u32 oplus_http_flag;
+	u32 oplus_skb_count;
+	int oplus_app_type;
+	s64 oplus_game_timestamp;
+	s64 oplus_game_last_timestamp;
+	//#endif /* OPLUS_FEATURE_WIFI_SLA */
 
-	/* If we were expected by an expectation, this will be it */
+#ifdef OPLUS_FEATURE_WIFI_LUCKYMONEY
+	u32 oplus_app_uid;
+#endif /* OPLUS_FEATURE_WIFI_LUCKYMONEY */
+    /* If we were expected by an expectation, this will be it */
 	struct nf_conn *master;
 
 #if defined(CONFIG_NF_CONNTRACK_MARK)
@@ -118,6 +151,17 @@ struct nf_conn {
 
 	/* Extensions */
 	struct nf_ct_ext *ext;
+
+	void *sfe_entry;
+
+#ifdef CONFIG_IP_NF_TARGET_NATTYPE_MODULE
+	unsigned long nattype_entry;
+#endif
+	struct list_head sip_segment_list;
+	const char *dptr_prev;
+	struct sip_length segment;
+	bool sip_original_dir;
+	bool sip_reply_dir;
 
 	/* Storage reserved for other modules, must be the last member */
 	union nf_conntrack_proto proto;
@@ -313,6 +357,7 @@ extern struct hlist_nulls_head *nf_conntrack_hash;
 extern unsigned int nf_conntrack_htable_size;
 extern seqcount_t nf_conntrack_generation;
 extern unsigned int nf_conntrack_max;
+extern unsigned int nf_conntrack_pkt_threshold;
 
 /* must be called with rcu read lock held */
 static inline void
