@@ -19,6 +19,7 @@
 #include <linux/ratelimit.h>
 #include <linux/list_lru.h>
 #include <trace/events/writeback.h>
+#include <linux/delay.h>
 #include "internal.h"
 
 /*
@@ -51,7 +52,6 @@
  * iunique_lock
  *   inode_hash_lock
  */
-
 static unsigned int i_hash_mask __read_mostly;
 static unsigned int i_hash_shift __read_mostly;
 static struct hlist_head *inode_hashtable __read_mostly;
@@ -1528,9 +1528,21 @@ static void iput_final(struct inode *inode)
  */
 void iput(struct inode *inode)
 {
+	int retry = 4;
 	if (!inode)
 		return;
-	BUG_ON(inode->i_state & I_CLEAR);
+/*BUG_ON(inode->i_state & I_CLEAR);*/
+	while(retry > 0) {
+		if(inode->i_state & I_CLEAR) {
+			msleep(50);
+			retry--;
+			if(retry == 0) {
+				WARN_ON(inode->i_state & I_CLEAR);
+			}
+		} else {
+			break;
+		}
+	}
 retry:
 	if (atomic_dec_and_lock(&inode->i_count, &inode->i_lock)) {
 		if (inode->i_nlink && (inode->i_state & I_DIRTY_TIME)) {
@@ -2135,3 +2147,27 @@ struct timespec current_time(struct inode *inode)
 	return timespec_trunc(now, inode->i_sb->s_time_gran);
 }
 EXPORT_SYMBOL(current_time);
+
+/*
+ * Generic function to check FS_IOC_SETFLAGS values and reject any invalid
+ * configurations.
+ *
+ * Note: the caller should be holding i_mutex, or else be sure that they have
+ * exclusive access to the inode structure.
+ */
+int vfs_ioc_setflags_prepare(struct inode *inode, unsigned int oldflags,
+			     unsigned int flags)
+{
+	/*
+	 * The IMMUTABLE and APPEND_ONLY flags can only be changed by
+	 * the relevant capability.
+	 *
+	 * This test looks nicer. Thanks to Pauline Middelink
+	 */
+	if ((flags ^ oldflags) & (FS_APPEND_FL | FS_IMMUTABLE_FL) &&
+	    !capable(CAP_LINUX_IMMUTABLE))
+		return -EPERM;
+
+	return 0;
+}
+EXPORT_SYMBOL(vfs_ioc_setflags_prepare);
