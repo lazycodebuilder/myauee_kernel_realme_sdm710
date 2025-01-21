@@ -128,6 +128,10 @@ struct n_tty_data {
 
 #define MASK(x) ((x) & (N_TTY_BUF_SIZE - 1))
 
+#if defined(CONFIG_TTY_FLUSH_LOCAL_ECHO)
+static void continue_process_echoes(struct work_struct *work);
+#endif
+
 static inline size_t read_cnt(struct n_tty_data *ldata)
 {
 	return ldata->read_head - ldata->read_tail;
@@ -764,6 +768,19 @@ static size_t __process_echoes(struct tty_struct *tty)
 			tail++;
 	}
 
+#if defined(CONFIG_TTY_FLUSH_LOCAL_ECHO)
+        if (ldata->echo_commit != tail) {
+                if (!tty->delayed_work) {
+			#ifndef OPLUS_BUG_STABILITY
+			/* zhangzongyu@PSW.BSP.Kernel.Statbility 2020/3/21 avoid multi init work */
+                        INIT_DELAYED_WORK(&tty->echo_delayed_work, continue_process_echoes);
+			#endif /* OPLUS_BUG_STABILITY */
+                        schedule_delayed_work(&tty->echo_delayed_work, 1);
+                }
+                tty->delayed_work = 1;
+        }
+#endif
+
  not_yet_stored:
 	ldata->echo_tail = tail;
 	return old_space - space;
@@ -829,6 +846,20 @@ static void flush_echoes(struct tty_struct *tty)
 	__process_echoes(tty);
 	mutex_unlock(&ldata->output_lock);
 }
+
+#if defined(CONFIG_TTY_FLUSH_LOCAL_ECHO)
+static void continue_process_echoes(struct work_struct *work)
+{
+	struct tty_struct *tty =
+		container_of(work, struct tty_struct, echo_delayed_work.work);
+	struct n_tty_data *ldata = tty->disc_data;
+
+	mutex_lock(&ldata->output_lock);
+	tty->delayed_work = 0;
+	__process_echoes(tty);
+	mutex_unlock(&ldata->output_lock);
+}
+#endif
 
 /**
  *	add_echo_byte	-	add a byte to the echo buffer
@@ -1892,6 +1923,14 @@ static void n_tty_close(struct tty_struct *tty)
 	if (tty->link)
 		n_tty_packet_mode_flush(tty);
 
+#ifdef OPLUS_BUG_STABILITY
+/* yanghao@PSW.BSP.Kernel.Statbility 2018/10/12 when uart stop should cancel_delay work first */
+#if defined(CONFIG_TTY_FLUSH_LOCAL_ECHO)
+	if(tty->echo_delayed_work.work.func)
+		cancel_delayed_work_sync(&tty->echo_delayed_work);
+#endif
+#endif /* OPLUS_BUG_STABILITY */
+
 	vfree(ldata);
 	tty->disc_data = NULL;
 }
@@ -1920,6 +1959,12 @@ static int n_tty_open(struct tty_struct *tty)
 	mutex_init(&ldata->output_lock);
 
 	tty->disc_data = ldata;
+#ifdef OPLUS_BUG_STABILITY
+/* zhangzongyu@PSW.BSP.Kernel.Statbility 2020/3/21 avoid multi init work */
+#if defined(CONFIG_TTY_FLUSH_LOCAL_ECHO)
+	INIT_DELAYED_WORK(&tty->echo_delayed_work, continue_process_echoes);
+#endif
+#endif /* OPLUS_BUG_STABILITY */
 	tty->closing = 0;
 	/* indicate buffer work may resume */
 	clear_bit(TTY_LDISC_HALTED, &tty->flags);

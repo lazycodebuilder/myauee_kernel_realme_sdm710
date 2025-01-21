@@ -55,10 +55,11 @@
 static int __read_mostly sysrq_enabled = CONFIG_MAGIC_SYSRQ_DEFAULT_ENABLE;
 static bool __read_mostly sysrq_always_enabled;
 
-static bool sysrq_on(void)
+bool sysrq_on(void)
 {
 	return sysrq_enabled || sysrq_always_enabled;
 }
+EXPORT_SYMBOL(sysrq_on);
 
 /*
  * A value of 1 means 'all', other nonzero values are an op mask:
@@ -162,6 +163,20 @@ static struct sysrq_key_op sysrq_reboot_op = {
 	.action_msg	= "Resetting",
 	.enable_mask	= SYSRQ_ENABLE_BOOT,
 };
+
+#ifdef VENDOR_EDIT
+extern int panic_flush_device_cache(int timeout);
+static void sysrq_handle_flush(int key)
+{
+	panic_flush_device_cache(0);
+}
+static struct sysrq_key_op sysrq_flush_op = {
+	.handler	= sysrq_handle_flush,
+	.help_msg	= "flush(y)",
+	.action_msg	= "Emergency Flush",
+	.enable_mask	= SYSRQ_ENABLE_SYNC,
+};
+#endif
 
 static void sysrq_handle_sync(int key)
 {
@@ -486,7 +501,11 @@ static struct sysrq_key_op *sysrq_key_table[36] = {
 	/* x: May be registered on sparc64 for global PMU dump */
 	NULL,				/* x */
 	/* y: May be registered on sparc64 for global register dump */
+#ifdef VENDOR_EDIT
+	&sysrq_flush_op,                 /* y */
+#else
 	NULL,				/* y */
+#endif
 	&sysrq_ftrace_dump_op,		/* z */
 };
 

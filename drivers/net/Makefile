@@ -11,6 +11,9 @@ obj-$(CONFIG_DUMMY) += dummy.o
 obj-$(CONFIG_EQUALIZER) += eql.o
 obj-$(CONFIG_IFB) += ifb.o
 obj-$(CONFIG_MACSEC) += macsec.o
+#ifneq ($(OPLUS_FEATURE_WIFI_LIMMITBGSPEED),)
+obj-$(CONFIG_IMQ) += imq.o
+#endif # OPLUS_FEATURE_WIFI_LIMMITBGSPEED
 obj-$(CONFIG_MACVLAN) += macvlan.o
 obj-$(CONFIG_MACVTAP) += macvtap.o
 obj-$(CONFIG_MII) += mii.o
@@ -19,6 +22,7 @@ obj-$(CONFIG_NET) += Space.o loopback.o
 obj-$(CONFIG_NETCONSOLE) += netconsole.o
 obj-$(CONFIG_PHYLIB) += phy/
 obj-$(CONFIG_RIONET) += rionet.o
+obj-$(CONFIG_RMNET_IPLO) += rmnet_iplo.o
 obj-$(CONFIG_NET_TEAM) += team/
 obj-$(CONFIG_TUN) += tun.o
 obj-$(CONFIG_VETH) += veth.o

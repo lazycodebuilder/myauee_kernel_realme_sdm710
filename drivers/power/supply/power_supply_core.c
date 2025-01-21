@@ -33,6 +33,26 @@ static struct device_type power_supply_dev_type;
 
 #define POWER_SUPPLY_DEFERRED_REGISTER_TIME	msecs_to_jiffies(10)
 
+#ifdef VENDOR_EDIT
+extern int sysctl_ext4_fsync_enable;
+extern int ext4_fsync_enable_status;
+
+static void power_supply_update_fsync(struct power_supply *psy)
+{
+	union power_supply_propval ret = {0, };
+	if (psy->desc->type == POWER_SUPPLY_TYPE_BATTERY)
+	{
+		if (power_supply_get_property(psy, POWER_SUPPLY_PROP_CAPACITY, &ret))
+			return;
+		if (ret.intval < 5 && ext4_fsync_enable_status != 0) {
+			ext4_fsync_enable_status = 0;
+		} else if (ret.intval > 5 && ext4_fsync_enable_status != 1) {
+			ext4_fsync_enable_status = 1;
+		}
+	}
+}
+#endif
+
 static bool __power_supply_is_supplied_by(struct power_supply *supplier,
 					 struct power_supply *supply)
 {
@@ -94,6 +114,14 @@ static void power_supply_changed_work(struct work_struct *work)
 		class_for_each_device(power_supply_class, NULL, psy,
 				      __power_supply_changed_work);
 		power_supply_update_leds(psy);
+#ifdef VENDOR_EDIT
+		if(sysctl_ext4_fsync_enable) {
+			power_supply_update_fsync(psy);
+		} else {
+			if(ext4_fsync_enable_status != 0)
+				ext4_fsync_enable_status = 0;
+		}
+#endif /*VENDOR_EDIT*/
 		atomic_notifier_call_chain(&power_supply_notifier,
 				PSY_EVENT_PROP_CHANGED, psy);
 		kobject_uevent(&psy->dev.kobj, KOBJ_CHANGE);
@@ -124,6 +152,7 @@ void power_supply_changed(struct power_supply *psy)
 }
 EXPORT_SYMBOL_GPL(power_supply_changed);
 
+static int psy_register_cooler(struct device *dev, struct power_supply *psy);
 /*
  * Notify that power supply was registered after parent finished the probing.
  *
@@ -131,6 +160,8 @@ EXPORT_SYMBOL_GPL(power_supply_changed);
  * calling power_supply_changed() directly from power_supply_register()
  * would lead to execution of get_property() function provided by the driver
  * too early - before the probe ends.
+ * Also, registering cooling device from the probe will execute the
+ * get_property() function. So register the cooling device after the probe.
  *
  * Avoid that by waiting on parent's mutex.
  */
@@ -147,6 +178,7 @@ static void power_supply_deferred_register_work(struct work_struct *work)
 		}
 	}
 
+	psy_register_cooler(psy->dev.parent, psy);
 	power_supply_changed(psy);
 
 	if (psy->dev.parent)
@@ -671,7 +703,7 @@ static struct thermal_cooling_device_ops psy_tcd_ops = {
 	.set_cur_state = ps_set_cur_charge_cntl_limit,
 };
 
-static int psy_register_cooler(struct power_supply *psy)
+static int psy_register_cooler(struct device *dev, struct power_supply *psy)
 {
 	int i;
 
@@ -679,7 +711,13 @@ static int psy_register_cooler(struct power_supply *psy)
 	for (i = 0; i < psy->desc->num_properties; i++) {
 		if (psy->desc->properties[i] ==
 				POWER_SUPPLY_PROP_CHARGE_CONTROL_LIMIT) {
-			psy->tcd = thermal_cooling_device_register(
+			if (dev)
+				psy->tcd = thermal_of_cooling_device_register(
+							dev_of_node(dev),
+							(char *)psy->desc->name,
+							psy, &psy_tcd_ops);
+			else
+				psy->tcd = thermal_cooling_device_register(
 							(char *)psy->desc->name,
 							psy, &psy_tcd_ops);
 			return PTR_ERR_OR_ZERO(psy->tcd);
@@ -704,7 +742,7 @@ static void psy_unregister_thermal(struct power_supply *psy)
 {
 }
 
-static int psy_register_cooler(struct power_supply *psy)
+static int psy_register_cooler(struct device *dev, struct power_supply *psy)
 {
 	return 0;
 }
@@ -776,10 +814,6 @@ __power_supply_register(struct device *parent,
 	if (rc)
 		goto register_thermal_failed;
 
-	rc = psy_register_cooler(psy);
-	if (rc)
-		goto register_cooler_failed;
-
 	rc = power_supply_create_triggers(psy);
 	if (rc)
 		goto create_triggers_failed;
@@ -803,8 +837,6 @@ __power_supply_register(struct device *parent,
 	return psy;
 
 create_triggers_failed:
-	psy_unregister_cooler(psy);
-register_cooler_failed:
 	psy_unregister_thermal(psy);
 register_thermal_failed:
 	device_del(dev);

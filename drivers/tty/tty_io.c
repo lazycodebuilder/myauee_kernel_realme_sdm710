@@ -937,19 +937,22 @@ void disassociate_ctty(int on_exit)
 	current->signal->tty_old_pgrp = NULL;
 
 	tty = tty_kref_get(current->signal->tty);
-	if (tty) {
+	spin_unlock_irq(&current->sighand->siglock);
+
+        if (tty) {
 		unsigned long flags;
+                tty_lock(tty);
 		spin_lock_irqsave(&tty->ctrl_lock, flags);
 		put_pid(tty->session);
 		put_pid(tty->pgrp);
 		tty->session = NULL;
 		tty->pgrp = NULL;
 		spin_unlock_irqrestore(&tty->ctrl_lock, flags);
+                tty_unlock(tty);
 		tty_kref_put(tty);
 	} else
 		tty_debug_hangup(tty, "no current tty\n");
 
-	spin_unlock_irq(&current->sighand->siglock);
 	/* Now clear signal->tty under the lock */
 	read_lock(&tasklist_lock);
 	session_clear_tty(task_session(current));
@@ -1673,6 +1676,10 @@ static void release_one_tty(struct work_struct *work)
 
 	put_pid(tty->pgrp);
 	put_pid(tty->session);
+#if defined(CONFIG_TTY_FLUSH_LOCAL_ECHO)
+	if (tty->echo_delayed_work.work.func)
+		cancel_delayed_work_sync(&tty->echo_delayed_work);
+#endif
 	free_tty_struct(tty);
 }
 
@@ -2628,14 +2635,19 @@ static int tiocspgrp(struct tty_struct *tty, struct tty_struct *real_tty, pid_t 
 		return -ENOTTY;
 	if (retval)
 		return retval;
-	if (!current->signal->tty ||
-	    (current->signal->tty != real_tty) ||
-	    (real_tty->session != task_session(current)))
-		return -ENOTTY;
 	if (get_user(pgrp_nr, p))
 		return -EFAULT;
 	if (pgrp_nr < 0)
 		return -EINVAL;
+
+        spin_lock_irq(&real_tty->ctrl_lock);
+        if (!current->signal->tty ||
+           (current->signal->tty != real_tty) ||
+           (real_tty->session != task_session(current))) {
+                retval = -ENOTTY;
+                goto out_unlock_ctrl;
+        }
+
 	rcu_read_lock();
 	pgrp = find_vpid(pgrp_nr);
 	retval = -ESRCH;
@@ -2645,12 +2657,14 @@ static int tiocspgrp(struct tty_struct *tty, struct tty_struct *real_tty, pid_t 
 	if (session_of_pgrp(pgrp) != task_session(current))
 		goto out_unlock;
 	retval = 0;
-	spin_lock_irq(&tty->ctrl_lock);
+
 	put_pid(real_tty->pgrp);
 	real_tty->pgrp = get_pid(pgrp);
-	spin_unlock_irq(&tty->ctrl_lock);
+
 out_unlock:
 	rcu_read_unlock();
+out_unlock_ctrl:
+        spin_unlock_irq(&real_tty->ctrl_lock);
 	return retval;
 }
 
@@ -2662,21 +2676,31 @@ out_unlock:
  *
  *	Obtain the session id of the tty. If there is no session
  *	return an error.
- *
- *	Locking: none. Reference to current->signal->tty is safe.
  */
 
 static int tiocgsid(struct tty_struct *tty, struct tty_struct *real_tty, pid_t __user *p)
 {
+        unsigned long flags;
+        pid_t sid;
+
 	/*
 	 * (tty == real_tty) is a cheap way of
 	 * testing if the tty is NOT a master pty.
 	*/
 	if (tty == real_tty && current->signal->tty != real_tty)
 		return -ENOTTY;
+        
+        spin_lock_irqsave(&real_tty->ctrl_lock, flags);
 	if (!real_tty->session)
-		return -ENOTTY;
-	return put_user(pid_vnr(real_tty->session), p);
+		goto err;
+	sid = pid_vnr(real_tty->session);
+        spin_unlock_irqrestore(&real_tty->ctrl_lock, flags);
+
+        return put_user(sid, p);
+
+err:
+        spin_unlock_irqrestore(&real_tty->ctrl_lock, flags);
+        return -ENOTTY;
 }
 
 /**
@@ -3094,10 +3118,15 @@ void __do_SAK(struct tty_struct *tty)
 	struct task_struct *g, *p;
 	struct pid *session;
 	int		i;
+        unsigned long flags;
 
 	if (!tty)
 		return;
-	session = tty->session;
+
+       
+	spin_lock_irqsave(&tty->ctrl_lock, flags);
+        session = get_pid(tty->session);
+        spin_unlock_irqrestore(&tty->ctrl_lock, flags);
 
 	tty_ldisc_flush(tty);
 
@@ -3129,6 +3158,7 @@ void __do_SAK(struct tty_struct *tty)
 		task_unlock(p);
 	} while_each_thread(g, p);
 	read_unlock(&tasklist_lock);
+        put_pid(session);
 #endif
 }
 

@@ -1,7 +1,7 @@
 /*
  * Device tree based initialization code for reserved memory.
  *
- * Copyright (c) 2013, 2015 The Linux Foundation. All Rights Reserved.
+ * Copyright (c) 2013, 2015, 2017 The Linux Foundation. All Rights Reserved.
  * Copyright (c) 2013,2014 Samsung Electronics Co., Ltd.
  *		http://www.samsung.com
  * Author: Marek Szyprowski <m.szyprowski@samsung.com>
@@ -24,10 +24,15 @@
 #include <linux/of_reserved_mem.h>
 #include <linux/sort.h>
 #include <linux/slab.h>
+#include <linux/kmemleak.h>
 
-#define MAX_RESERVED_REGIONS	16
+#define MAX_RESERVED_REGIONS	32
 static struct reserved_mem reserved_mem[MAX_RESERVED_REGIONS];
 static int reserved_mem_count;
+
+#ifdef OPLUS_FEATURE_LOWMEM_DBG
+static unsigned long reserved_mem_size;
+#endif /* OPLUS_FEATURE_LOWMEM_DBG */
 
 #if defined(CONFIG_HAVE_MEMBLOCK)
 #include <linux/memblock.h>
@@ -54,8 +59,10 @@ int __init __weak early_init_dt_alloc_reserved_memory_arch(phys_addr_t size,
 	}
 
 	*res_base = base;
-	if (nomap)
+	if (nomap) {
+		kmemleak_ignore_phys(base);
 		return memblock_remove(base, size);
+	}
 	return 0;
 }
 #else
@@ -281,6 +288,9 @@ void __init fdt_init_reserved_mem(void)
 						 &rmem->base, &rmem->size);
 		if (err == 0)
 			__reserved_mem_init_node(rmem);
+#ifdef OPLUS_FEATURE_LOWMEM_DBG
+		reserved_mem_size += rmem->size;
+#endif /* OPLUS_FEATURE_LOWMEM_DBG */
 	}
 }
 
@@ -363,6 +373,13 @@ int of_reserved_mem_device_init_by_idx(struct device *dev,
 	return ret;
 }
 EXPORT_SYMBOL_GPL(of_reserved_mem_device_init_by_idx);
+
+#ifdef OPLUS_FEATURE_LOWMEM_DBG
+unsigned long dt_memory_reserved_pages(void)
+{
+	return reserved_mem_size >> PAGE_SHIFT;
+}
+#endif /* OPLUS_FEATURE_LOWMEM_DBG */
 
 /**
  * of_reserved_mem_device_release() - release reserved memory device structures
