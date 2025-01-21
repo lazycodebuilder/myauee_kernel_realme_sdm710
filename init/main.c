@@ -89,6 +89,11 @@
 #include <asm/sections.h>
 #include <asm/cacheflush.h>
 
+#ifdef OPLUS_FEATURE_PHOENIX
+// Kun.Hu@TECH.BSP.Stability.PHOENIX_PROJECT 2019/06/11, Add for phoenix project
+#include "../drivers/soc/oplus/system/oppo_phoenix/oppo_phoenix.h"
+#endif  //OPLUS_FEATURE_PHOENIX
+
 static int kernel_init(void *);
 
 extern void init_IRQ(void);
@@ -487,11 +492,6 @@ asmlinkage __visible void __init start_kernel(void)
 	smp_setup_processor_id();
 	debug_objects_early_init();
 
-	/*
-	 * Set up the the initial canary ASAP:
-	 */
-	boot_init_stack_canary();
-
 	cgroup_init_early();
 
 	local_irq_disable();
@@ -505,6 +505,10 @@ asmlinkage __visible void __init start_kernel(void)
 	page_address_init();
 	pr_notice("%s", linux_banner);
 	setup_arch(&command_line);
+	/*
+	 * Set up the the initial canary ASAP:
+	 */
+	boot_init_stack_canary();
 	mm_init_cpumask(&init_mm);
 	setup_command_line(command_line);
 	setup_nr_cpu_ids();
@@ -537,6 +541,10 @@ asmlinkage __visible void __init start_kernel(void)
 	sort_main_extable();
 	trap_init();
 	mm_init();
+#ifdef OPLUS_FEATURE_PHOENIX
+	if(phx_set_boot_stage)
+		phx_set_boot_stage(KERNEL_MM_INIT_DONE);
+#endif //OPLUS_FEATURE_PHOENIX
 
 	/*
 	 * Set up the scheduler prior starting any interrupts (such as the
@@ -586,6 +594,11 @@ asmlinkage __visible void __init start_kernel(void)
 	WARN(!irqs_disabled(), "Interrupts were enabled early\n");
 	early_boot_irqs_disabled = false;
 	local_irq_enable();
+#ifdef OPLUS_FEATURE_PHOENIX
+	// Kun.Hu@TECH.BSP.Stability.PHOENIX_PROJECT 2019/06/11, Add for phoenix project
+	if(phx_set_boot_stage)
+		phx_set_boot_stage(KERNEL_LOCAL_IRQ_ENABLE);
+#endif //OPLUS_FEATURE_PHOENIX
 
 	kmem_cache_init_late();
 
@@ -655,6 +668,10 @@ asmlinkage __visible void __init start_kernel(void)
 	taskstats_init_early();
 	delayacct_init();
 
+#ifdef OPLUS_FEATURE_PHOENIX
+	if(phx_set_boot_stage)
+		phx_set_boot_stage(KERNEL_DELAYACCT_INIT_DONE);
+#endif //OPLUS_FEATURE_PHOENIX
 	check_bugs();
 
 	acpi_subsystem_init();
@@ -875,10 +892,20 @@ static void __init do_basic_setup(void)
 	cpuset_init_smp();
 	shmem_init();
 	driver_init();
+#ifdef OPLUS_FEATURE_PHOENIX
+	// Kun.Hu@TECH.BSP.Stability.PHOENIX_PROJECT 2019/06/11, Add for phoenix project
+	if(phx_set_boot_stage)
+		phx_set_boot_stage(KERNEL_DRIVER_INIT_DONE);
+#endif //OPLUS_FEATURE_PHOENIX
 	init_irq_proc();
 	do_ctors();
 	usermodehelper_enable();
 	do_initcalls();
+#ifdef OPLUS_FEATURE_PHOENIX
+	// Kun.Hu@TECH.BSP.Stability.PHOENIX_PROJECT 2019/06/11, Add for phoenix project
+	if(phx_set_boot_stage)
+		phx_set_boot_stage(KERNEL_DO_INITCALLS_DONE);
+#endif //OPLUS_FEATURE_PHOENIX
 }
 
 static void __init do_pre_smp_initcalls(void)
@@ -962,6 +989,11 @@ static int __ref kernel_init(void *unused)
 
 	rcu_end_inkernel_boot();
 
+#ifdef OPLUS_FEATURE_PHOENIX
+	// Kun.Hu@TECH.BSP.Stability.PHOENIX_PROJECT 2019/06/11, Add for phoenix project
+	if(phx_set_boot_stage)
+		phx_set_boot_stage(KERNEL_INIT_DONE);
+#endif //OPLUS_FEATURE_PHOENIX
 	if (ramdisk_execute_command) {
 		ret = run_init_process(ramdisk_execute_command);
 		if (!ret)
@@ -1028,6 +1060,11 @@ static noinline void __init kernel_init_freeable(void)
 
 	do_basic_setup();
 
+#ifdef OPLUS_FEATURE_PHOENIX
+	// Kun.Hu@TECH.BSP.Stability.PHOENIX_PROJECT 2019/06/11, Add for phoenix project
+	if(phx_set_boot_stage)
+		phx_set_boot_stage(KERNEL_DO_BASIC_SETUP_DONE);
+#endif //OPLUS_FEATURE_PHOENIX
 	/* Open the /dev/console on the rootfs, this should never fail */
 	if (sys_open((const char __user *) "/dev/console", O_RDWR, 0) < 0)
 		pr_err("Warning: unable to open an initial console.\n");
