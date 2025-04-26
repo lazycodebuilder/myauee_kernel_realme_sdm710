@@ -33,6 +33,7 @@ endif
 
 dts-dirs += 19651
 dts-dirs += 18621
+dts-dirs += 18621-lagacy
 dts-dirs += qcom
 
 #endif
