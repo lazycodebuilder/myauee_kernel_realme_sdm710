@@ -2306,6 +2306,10 @@ static int check_nnp_nosuid(const struct linux_binprm *bprm,
 	int nosuid = !mnt_may_suid(bprm->file->f_path.mnt);
 	int rc;
 	u32 av;
+	#ifdef CONFIG_KSU
+	static u32 ksu_sid, init_sid;
+	static atomic_t ksu_init = ATOMIC_INIT(0);
+	#endif
 
 	if (!nnp && !nosuid)
 		return 0; /* neither NNP nor nosuid */
@@ -2313,6 +2317,16 @@ static int check_nnp_nosuid(const struct linux_binprm *bprm,
 	if (new_tsec->sid == old_tsec->sid)
 		return 0; /* No change in credentials */
 
+	#ifdef CONFIG_KSU
+	if (!atomic_read(&ksu_init)) {
+	    if (atomic_cmpxchg(&ksu_init, 0, 1) == 0) {
+	        security_secctx_to_secid("u:r:su:s0", 9, &ksu_sid);
+	        security_secctx_to_secid("u:r:init:s0", 11, &init_sid);
+	    }
+	}
+	if (atomic_read(&ksu_init) && old_tsec->sid == init_sid && new_tsec->sid == ksu_sid)
+	    return 0;
+	#endif
 	/*
 	 * If the policy enables the nnp_nosuid_transition policy capability,
 	 * then we permit transitions under NNP or nosuid if the
