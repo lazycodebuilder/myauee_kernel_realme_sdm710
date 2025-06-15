@@ -1428,6 +1428,39 @@ config CROSS_COMPILE_COMPAT
 
 endmenu
 
+menu "KernelSU"
+
+if KSU
+config KSU_SYSCALL_HOOKS
+	bool "Enable KernelSU syscall hooks"
+	depends on KSU
+	default y
+	help
+	  Enable syscall hooking mechanisms for KernelSU to intercept
+	  and monitor various kernel operations including:
+	  
+	  - Process execution (execveat syscall)
+	  - File access operations (faccessat syscall)
+	  - Virtual filesystem read operations (vfs_read)
+	  - File status operations (stat syscall family)
+	  - Input device event handling
+	  
+	  These hooks allow KernelSU to implement advanced security
+	  features such as process monitoring, file access control,
+	  and system behavior modification.
+	  
+	  The hooks are implemented with minimal performance overhead
+	  using unlikely() branch prediction optimization and are only
+	  active when KernelSU features requiring them are enabled.
+	  
+	  This option is safe to enable and will not affect system
+	  behavior when KernelSU is inactive.
+	  
+	  If unsure, say Y.
+endif
+
+endmenu
+
 menu "Power management options"
 
 source "kernel/power/Kconfig"
