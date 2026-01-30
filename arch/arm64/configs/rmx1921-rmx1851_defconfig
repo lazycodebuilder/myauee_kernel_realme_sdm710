@@ -2598,7 +2598,7 @@ CONFIG_NX30P6093=y
 # Qualcomm Technologies Inc Charger and Fuel Gauge support
 #
 # CONFIG_QPNP_FG is not set
-CONFIG_QPNP_FG_GEN3=y
+# CONFIG_QPNP_FG_GEN3 is not set
 # CONFIG_SMB135X_CHARGER is not set
 # CONFIG_SMB1360_CHARGER_FG is not set
 # CONFIG_SMB1355_SLAVE_CHARGER is not set
@@ -2612,7 +2612,7 @@ CONFIG_QPNP_SMB2=y
 # CONFIG_QPNP_LINEAR_CHARGER is not set
 # CONFIG_QPNP_TYPEC is not set
 # CONFIG_QPNP_QG is not set
-CONFIG_SMB1390_CHARGE_PUMP=y
+# CONFIG_SMB1390_CHARGE_PUMP is not set
 
 #
 # Miscellaneous Qualcomm Technologies, Inc. power support
